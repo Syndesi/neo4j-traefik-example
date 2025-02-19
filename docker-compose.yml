@@ -1,0 +1,73 @@
+services:
+
+  traefik:
+    image: traefik:v3.3
+    container_name: traefik
+    command:
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.bolt.address=:7687
+      - --providers.docker
+      - --providers.docker.exposedByDefault=false
+      - --api
+      - --certificatesresolvers.le.acme.caserver=$ACME_SERVER
+      - --certificatesresolvers.le.acme.email=$ACME_EMAIL
+      - --certificatesresolvers.le.acme.storage=/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+    ports:
+      - '80:80'
+      - '443:443'
+      - '7687:7687'
+    volumes:
+      - '/var/run/docker.sock:/var/run/docker.sock:ro'
+      - './acme.json:/acme.json'
+    labels:
+      - 'traefik.enable=true'
+
+      # dashboard
+      - 'traefik.http.routers.traefik.rule=Host(`$DOMAIN_TRAEFIK`)'
+      - 'traefik.http.routers.traefik.service=api@internal'
+      - 'traefik.http.routers.traefik.tls.certresolver=le'
+      - 'traefik.http.routers.traefik.entrypoints=websecure'
+      - 'traefik.http.routers.traefik.middlewares=authtraefik'
+      - 'traefik.http.middlewares.authtraefik.basicauth.users=$TRAEFIK_HTTP_BASIC_AUTH'
+
+      # global redirect to https
+      - 'traefik.http.routers.http-catchall.rule=hostregexp(`{host:.+}`)'
+      - 'traefik.http.routers.http-catchall.entrypoints=web'
+      - 'traefik.http.routers.http-catchall.middlewares=redirect-to-https'
+
+      # middleware redirect
+      - 'traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https'
+
+  neo4j:
+    container_name: neo4j
+    image: neo4j:5.26
+    environment:
+      # placeholder credentials - MUST BE CHANGED IN PRODUCTION
+      - NEO4J_AUTH=neo4j/password
+    expose:
+      - 7474
+      - 7687
+    labels:
+      - 'traefik.enable=true'
+
+      # Neo4j browser
+      - 'traefik.http.services.neo4j.loadbalancer.server.port=7474'
+      - 'traefik.http.routers.neo4j.service=neo4j'
+      - 'traefik.http.routers.neo4j.rule=Host(`$DOMAIN_NEO4J`)'
+      - 'traefik.http.routers.neo4j.entrypoints=websecure'
+      - 'traefik.http.routers.neo4j.tls=true'
+      - 'traefik.http.routers.neo4j.tls.certresolver=le'
+
+      # fix Neo4j browser CORS header
+      - 'traefik.http.routers.neo4j.middlewares=cors-neo4j'
+      - 'traefik.http.middlewares.cors-neo4j.headers.customResponseHeaders.Access-Control-Allow-Origin=https://$DOMAIN_NEO4J https://$DOMAIN_NEO4J:7687'
+
+      # Neo4j bolt
+      - 'traefik.http.services.neo4j-bolt.loadbalancer.server.port=7687'
+      - 'traefik.http.routers.neo4j-bolt.service=neo4j-bolt'
+      - 'traefik.http.routers.neo4j-bolt.rule=Host(`$DOMAIN_NEO4J`)'
+      - 'traefik.http.routers.neo4j-bolt.entrypoints=bolt'
+      - 'traefik.http.routers.neo4j-bolt.tls=true'
+      - 'traefik.http.routers.neo4j-bolt.tls.certresolver=le'
